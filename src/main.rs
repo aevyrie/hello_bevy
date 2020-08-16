@@ -2,28 +2,45 @@ use bevy::prelude::*;
 
 fn main() {
     App::build()
+        .add_resource(Msaa { samples: 4 })
         .add_default_plugins()
-        .add_startup_system(add_people.system())
-        .add_system(hello_world.system())
-        .add_system(greet_people.system())
+        .add_startup_system(setup.system())
         .run();
 }
 
-fn hello_world() {
-    println!("Hello world!");
-}
-
-struct Person;
-
-struct Name(String);
-
-fn add_people(mut commands: Commands) {
+/// set up a simple 3D scene
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // add entities to the world
     commands
-        .spawn((Person, Name("Bob Belcher".to_string())))
-        .spawn((Person, Name("Linda Belcher".to_string())))
-        .spawn((Person, Name("Tina Belcher".to_string())));
-}
-
-fn greet_people(person: &Person, name: &Name) {
-    println!("Hello {}!", name.0);
+        // plane
+        .spawn(PbrComponents {
+            mesh: meshes.add(Mesh::from(shape::Plane { size: 10.0 })),
+            material: materials.add(Color::rgb(0.1, 0.2, 0.1).into()),
+            ..Default::default()
+        })
+        // cube
+        .spawn(PbrComponents {
+            mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
+            material: materials.add(Color::rgb(0.5, 0.4, 0.3).into()),
+            translation: Translation::new(0.0, 1.0, 0.0),
+            ..Default::default()
+        })
+        // light
+        .spawn(LightComponents {
+            translation: Translation::new(4.0, 8.0, 4.0),
+            ..Default::default()
+        })
+        // camera
+        .spawn(Camera3dComponents {
+            transform: Transform::new_sync_disabled(Mat4::face_toward(
+                Vec3::new(-3.0, 5.0, 8.0),
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            )),
+            ..Default::default()
+        });
 }
