@@ -13,6 +13,15 @@
 		},
 		{
 			"type": "cargo",
+			"command": "run",
+			"problemMatcher": [
+				"$rustc"
+			],
+			"group": "build",
+			"label": "rust: cargo run"
+		},
+		{
+			"type": "cargo",
 			"command": "build",
 			"problemMatcher": [
 				"$rustc"
@@ -20,14 +29,5 @@
 			"group": "build",
 			"label": "rust: cargo build"
 		},
-		{
-			"type": "cargo",
-			"command": "check",
-			"problemMatcher": [
-				"$rustc"
-			],
-			"group": "build",
-			"label": "rust: cargo check"
-		}
 	]
 }
