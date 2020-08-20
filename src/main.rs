@@ -18,7 +18,7 @@ struct State {
 
 fn main() {
     App::build()
-        .add_resource(ClearColor(Color::rgb(1.0, 1.0, 1.0)))
+        .add_resource(ClearColor(Color::rgb(0.8, 0.8, 0.8)))
         .add_resource(Msaa { samples: 4 })
         .add_resource(ElapsedTime(Timer::from_seconds(2.0)))
         .init_resource::<State>()
@@ -79,8 +79,8 @@ fn setup(
     let cam_entity = commands.spawn(Camera3dComponents::default()).current_entity();
 
     let light_entity = commands.spawn(LightComponents{
-        translation: Translation::new(5.0, 5.0, 5.0),
-        light: Light{color: Color::rgb(0.0, 0.0, 1.0),..Default::default()},
+        translation: Translation::new(0.0, 0.0, 5.0),
+        light: Light{color: Color::rgb(0.5, 0.5, 0.5),..Default::default()},
         ..Default::default()
     }).current_entity();
 
@@ -128,7 +128,8 @@ fn setup(
         .with(LightIndicator{})
         // Create the environment.
         .spawn(LightComponents {
-            translation: Translation::new(5.0, 5.0, 5.0),
+            translation: Translation::new(30.0, 100.0, 30.0),
+            light: Light{color: Color::rgb(0.0, 0.0, 0.0),..Default::default()},
             ..Default::default()
         });
 }
@@ -165,6 +166,23 @@ fn process_mouse_events(
         }
         camera.cam_distance -= scroll_amount * time.delta_seconds * zoom_scale;
     }
+
+    /* Orbit cameras
+
+    Rotation center
+    Cast ray from mouse coordinate to first triangle intersection.
+
+    Constrained Orbit
+    is the rotation center fixed in this case?
+    mouse_y: quat_pitch = 
+    mouse_x = camera yaw
+
+    Free Orbit
+    Axis of rotation: through rotation point, perpendicular to mouse vector
+    */
+    
+
+
 }
 
 fn update_camera(
@@ -179,18 +197,22 @@ fn update_camera(
     if timer.0.finished {timer.0.reset()};
     timer.0.tick(time.delta_seconds);
 
-    for (mut center,  mut rotation) in &mut rotation_center_query.iter() {
-        center.cam_pitch = center.cam_pitch.max(1f32.to_radians()).min(179f32.to_radians());
-        center.cam_distance = center.cam_distance.max(5.).min(30.);
+    // Take the results of the orbit cam query
+    for (mut orbit_center,  mut rotation) in &mut rotation_center_query.iter() {
+        orbit_center.cam_pitch = orbit_center.cam_pitch.max(1f32.to_radians()).min(179f32.to_radians());
+        orbit_center.cam_distance = orbit_center.cam_distance.max(5.).min(30.);
 
-        rotation.0 = Quat::from_rotation_y(-center.cam_yaw);
+        rotation.0 = Quat::from_rotation_y(-orbit_center.cam_yaw);
 
-        if let Some(camera_entity) = center.cam_entity {
+        //  If a camera entity exists in the query
+        if let Some(camera_entity) = orbit_center.cam_entity {
+
+
             let cam_pos = Vec3::new(
                     0.0, 
-                    center.cam_pitch.cos(), 
-                    -center.cam_pitch.sin()
-                ).normalize()* center.cam_distance;
+                    orbit_center.cam_pitch.cos(), 
+                    -orbit_center.cam_pitch.sin()
+                ).normalize()* orbit_center.cam_distance;
 
             if let Ok(mut translation) = camera_query.get_mut::<Translation>(camera_entity) {
                 translation.0 = cam_pos;
@@ -207,21 +229,23 @@ fn update_camera(
                 camera_transform = transform.value;
             }
         
-            if let Some(light_entity) = center.light_entity {
+            if let Some(light_entity) = orbit_center.light_entity {
                 let light_pos = Vec3::new(
                     5.0 * timer.0.elapsed.mul_add(6.28, 0.0).sin(), 
                     5.0 * timer.0.elapsed.mul_add(3.14, 0.0).sin(), 
                     5.0 * timer.0.elapsed.mul_add(3.14, 0.0).cos(), 
-                ).normalize() * center.cam_distance;
+                ).normalize() * orbit_center.cam_distance;
 
                 if let Ok(mut translation) = light_query.get_mut::<Translation>(light_entity) {
-                    //translation.0 = Translation::from()
-                    //dbg!(translation, timer.0.elapsed);
+                    // get the quat the corresponds to the current yaw of the camera
+                    let light_rot = Quat::from_rotation_y(-orbit_center.cam_yaw);
+                    // 
+                    translation.0 = light_rot.mul_vec3(cam_pos.into());
                 }
 
                 if let Ok(mut transform) = light_query.get_mut::<Transform>(light_entity) {
                     transform.value = camera_transform;
-                    transform.sync = true;
+                    transform.sync = false;
                 }
             }
         }
