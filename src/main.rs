@@ -268,17 +268,29 @@ fn cursor_pick(
     meshes: Res<Assets<Mesh>>,
     // Components
     mut query: Query<(&Handle<Mesh>, &Transform)>,
+    mut orbit_camera_query: Query<&OrbitCamera>,
+    transform_query: Query<&mut Transform>,
 ) {
     // Get the cursor position
     let mut mouse_movement = MouseMotion{ delta: Vec2::new(0.0, 0.0) };
     for event in state.mouse_motion_event_reader.iter(&cursor) {
         mouse_movement = event.clone();
     }
+    // Get the camera transformation and invert it for use later
+    let mut inv_camera_transform = Mat4::default();
+    for orbit_camera in &mut orbit_camera_query.iter() {
+        if let Some(camera_entity) = orbit_camera.cam_entity {
+            if let Ok(transform) = transform_query.get_mut::<Transform>(camera_entity) {
+                inv_camera_transform = transform.value.inverse();
+            }
+        }
+    }
     // Iterate through each mesh in the scene
     for (mesh_handle, transform) in &mut query.iter() {
         // Use the mesh handle to get a reference to a mesh asset
         if let Some(mesh) = meshes.get(mesh_handle) {
             if mesh.primitive_topology != PrimitiveTopology::TriangleList { break }
+            let combined_transform = inv_camera_transform * transform.value;
             for attribute in mesh.attributes.iter() {
                 if attribute.name != VertexAttribute::POSITION { break } 
                 match &attribute.values {
@@ -302,7 +314,7 @@ fn cursor_pick(
 
                             for index in 0..3 {
                                 let vertex_position = Vec3::from(triangle[index]).extend(1.0);
-                                vertices[index] = transform.value*vertex_position;
+                                vertices[index] = combined_transform * vertex_position;
                             }
                             
                         }
