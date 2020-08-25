@@ -4,8 +4,14 @@ use bevy:: {
         MouseMotion,
         MouseWheel,
         MouseButton,
+        MouseScrollUnit,
     },
     render::pass::ClearColor,
+    render::pipeline::PrimitiveTopology,
+    render::mesh::{
+        VertexAttribute, 
+        VertexAttributeValues
+    },
 };
 
 #[derive(Default)]
@@ -20,16 +26,13 @@ fn main() {
     App::build()
         .add_resource(ClearColor(Color::rgb(0.8, 0.8, 0.8)))
         .add_resource(Msaa { samples: 4 })
-        .add_resource(ElapsedTime(Timer::from_seconds(2.0)))
         .init_resource::<State>()
         .add_default_plugins()
         .add_startup_system(setup.system())
-        .add_system(process_mouse_events.system())
+        .add_system(process_user_input.system())
         .add_system(update_camera.system())
         .run();
 }
-
-struct ElapsedTime(Timer);
 
 struct OrbitCamera {
     cam_distance: f32,
@@ -37,6 +40,7 @@ struct OrbitCamera {
     cam_yaw: f32,
     cam_entity: Option<Entity>,
     light_entity: Option<Entity>,
+    camera_manipulation: Option<CameraManipulation>,
 }
 
 
@@ -48,6 +52,7 @@ impl Default for OrbitCamera {
             cam_yaw: 0.0,
             cam_entity: None,
             light_entity: None,
+            camera_manipulation: None,
         }
     }
 }
@@ -77,6 +82,7 @@ fn setup(
 
 
     let cam_entity = commands.spawn(Camera3dComponents::default()).current_entity();
+
 
     let light_entity = commands.spawn(LightComponents{
         translation: Translation::new(0.0, 0.0, 5.0),
@@ -114,7 +120,7 @@ fn setup(
             ..Default::default()
         })
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere { radius: 1.0, subdivisions: 5 })),
+            mesh: meshes.add(Mesh::from(shape::Icosphere { radius: 1.0, subdivisions: 10 })),
             material: geometry_material_handle.clone(),
             translation: Translation::new(0.0, 0.0, 0.0),
             ..Default::default()
@@ -134,68 +140,76 @@ fn setup(
         });
 }
 
-/// Process user mouse input and update the camera
-fn process_mouse_events(
+enum CameraManipulation {
+    Pan(MouseMotion),
+    Orbit(MouseMotion),
+    Rotate(MouseMotion),
+    Zoom(MouseWheel),
+}
+
+/// Process user input and determine needed output
+fn process_user_input(
     // Resources
     time: Res<Time>,
     mut state: ResMut<State>, 
     mouse_button_inputs: Res<Input<MouseButton>>,
     mouse_motion_events: Res<Events<MouseMotion>>,
     mouse_wheel_events: Res<Events<MouseWheel>>,
+    keyboard_input: Res<Input<KeyCode>>,
     // Component Queries
     mut query: Query<&mut OrbitCamera>,
 ) {
     // Get the mouse movement since the last frame
-    let mut mouse_movement = Vec2::zero();
+    let mut mouse_movement = MouseMotion{ delta: Vec2::new(0.0, 0.0) };
     for event in state.mouse_motion_event_reader.iter(&mouse_motion_events) {
-        mouse_movement = event.delta;
+        mouse_movement = event.clone();
     }
     // Get the scroll wheel movement since the last frame
-    let mut scroll_amount = 0.0;
+    let mut scroll_amount = MouseWheel{ unit: MouseScrollUnit::Pixel , x: 0.0, y: 0.0 };
     for event in state.mouse_wheel_event_reader.iter(&mouse_wheel_events) {
-        scroll_amount = event.y as f32;
+        scroll_amount = event.clone();
     }
     // Scaling factors for zooming and rotation
     let zoom_scale = 50.0;
     let look_scale = 1.0;
 
+    let l_alt: bool = keyboard_input.pressed(KeyCode::LAlt);
+    let l_shift: bool = keyboard_input.pressed(KeyCode::LShift);
+    let l_mouse: bool = mouse_button_inputs.pressed(MouseButton::Left);
+    let m_mouse: bool = mouse_button_inputs.pressed(MouseButton::Middle);
+    let r_mouse: bool = mouse_button_inputs.pressed(MouseButton::Right);
+
+    let manipulation = 
+        if l_alt && m_mouse { Some(CameraManipulation::Pan(mouse_movement)) }
+        else if l_shift && m_mouse { Some(CameraManipulation::Rotate(mouse_movement)) }
+        else if m_mouse { Some(CameraManipulation::Orbit(mouse_movement)) }
+        else if scroll_amount.y != 0.0 { Some(CameraManipulation::Zoom(scroll_amount)) }
+        else { None };
+
     for mut camera in &mut query.iter() {
-        if mouse_button_inputs.pressed(MouseButton::Middle) {
-            camera.cam_yaw += mouse_movement.x() * time.delta_seconds;
-            camera.cam_pitch -= mouse_movement.y() * time.delta_seconds * look_scale;
+        
+        match &manipulation {
+            None => {},
+            Some(CameraManipulation::Orbit(mouse_move)) => {
+                camera.cam_yaw += mouse_move.delta.x() * time.delta_seconds;
+                camera.cam_pitch -= mouse_move.delta.y() * time.delta_seconds * look_scale;
+            },
+            Some(CameraManipulation::Zoom(scroll)) => {
+                camera.cam_distance -= scroll.y * time.delta_seconds * zoom_scale;
+            },
+            Some(CameraManipulation::Pan(mouse_move)) => {},
+            Some(CameraManipulation::Rotate(mouse_move)) => {},
         }
-        camera.cam_distance -= scroll_amount * time.delta_seconds * zoom_scale;
     }
-
-    /* Orbit cameras
-
-    Rotation center
-    Cast ray from mouse coordinate to first triangle intersection.
-
-    Constrained Orbit
-    is the rotation center fixed in this case?
-    mouse_y: quat_pitch = 
-    mouse_x = camera yaw
-
-    Free Orbit
-    Axis of rotation: through rotation point, perpendicular to mouse vector
-    */
-    
-
-
 }
 
 fn update_camera(
     // Resources
-    time: Res<Time>,
-    mut timer: ResMut<ElapsedTime>,
     // Component Queries
     mut rotation_center_query: Query<(&mut OrbitCamera, &mut Rotation)>,
     camera_query: Query<(&mut Translation, &mut Rotation, &mut Transform)>,
     light_query: Query<(&mut Translation, &mut Light, &mut Transform)>,
 ) {
-    if timer.0.finished {timer.0.reset()};
-    timer.0.tick(time.delta_seconds);
 
     // Take the results of the orbit cam query
     for (mut orbit_center,  mut rotation) in &mut rotation_center_query.iter() {
@@ -230,11 +244,6 @@ fn update_camera(
             }
         
             if let Some(light_entity) = orbit_center.light_entity {
-                let light_pos = Vec3::new(
-                    5.0 * timer.0.elapsed.mul_add(6.28, 0.0).sin(), 
-                    5.0 * timer.0.elapsed.mul_add(3.14, 0.0).sin(), 
-                    5.0 * timer.0.elapsed.mul_add(3.14, 0.0).cos(), 
-                ).normalize() * orbit_center.cam_distance;
 
                 if let Ok(mut translation) = light_query.get_mut::<Translation>(light_entity) {
                     // get the quat the corresponds to the current yaw of the camera
@@ -246,6 +255,59 @@ fn update_camera(
                 if let Ok(mut transform) = light_query.get_mut::<Transform>(light_entity) {
                     transform.value = camera_transform;
                     transform.sync = false;
+                }
+            }
+        }
+    }
+}
+
+fn cursor_pick(
+    // Resources
+    mut state: ResMut<State>, 
+    cursor: Res<Events<MouseMotion>>,
+    meshes: Res<Assets<Mesh>>,
+    // Components
+    mut query: Query<(&Handle<Mesh>, &Transform)>,
+) {
+    // Get the cursor position
+    let mut mouse_movement = MouseMotion{ delta: Vec2::new(0.0, 0.0) };
+    for event in state.mouse_motion_event_reader.iter(&cursor) {
+        mouse_movement = event.clone();
+    }
+    // Iterate through each mesh in the scene
+    for (mesh_handle, transform) in &mut query.iter() {
+        // Use the mesh handle to get a reference to a mesh asset
+        if let Some(mesh) = meshes.get(mesh_handle) {
+            if mesh.primitive_topology != PrimitiveTopology::TriangleList { break }
+            for attribute in mesh.attributes.iter() {
+                if attribute.name != VertexAttribute::POSITION { break } 
+                match &attribute.values {
+                    VertexAttributeValues::Float3(positions) => {
+                        // Now that we're in the vector of vertex positions, we want to look at
+                        // positions for each vertex per triangle, so we'll pull out these vertex
+                        // positions in chunks of three
+                        let v = Vec4::default();
+                        let mut vertices: [Vec4; 3] = [v, v, v];
+                        for triangle in positions.chunks(3){
+                            // With the three vertex positions of the current triangle available,
+                            // we need to transform the position from the mesh's space, to the world
+                            // space using the mesh's transform. First, the Vec3 needs to be
+                            // converted into a Vec4 by adding a 1.0 to the end
+
+                            // TODO: find the transform that represents moving this position into
+                            // the coordinate system relative to the ray. This can be pre-calc'd
+                            // so that these vertex positions only need to be multiplied by this
+                            // final transform. Once in this state, comparison to the cast ray
+                            // should be simple x/y comparison.
+
+                            for index in 0..3 {
+                                let vertex_position = Vec3::from(triangle[index]).extend(1.0);
+                                vertices[index] = transform.value*vertex_position;
+                            }
+                            
+                        }
+                    },
+                    _ => {}
                 }
             }
         }
