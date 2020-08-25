@@ -239,7 +239,7 @@ fn update_camera(
 
             let mut camera_transform = Mat4::default();
 
-            if let Ok(mut transform) = camera_query.get_mut::<Transform>(camera_entity) {
+            if let Ok(transform) = camera_query.get_mut::<Transform>(camera_entity) {
                 camera_transform = transform.value;
             }
         
