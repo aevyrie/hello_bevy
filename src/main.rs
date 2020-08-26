@@ -1,17 +1,9 @@
-use bevy:: {
+use bevy::{
+    input::mouse::{MouseButton, MouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
-    input::mouse::{
-        MouseMotion,
-        MouseWheel,
-        MouseButton,
-        MouseScrollUnit,
-    },
+    render::mesh::{VertexAttribute, VertexAttributeValues},
     render::pass::ClearColor,
     render::pipeline::PrimitiveTopology,
-    render::mesh::{
-        VertexAttribute, 
-        VertexAttributeValues
-    },
 };
 
 #[derive(Default)]
@@ -31,6 +23,7 @@ fn main() {
         .add_startup_system(setup.system())
         .add_system(process_user_input.system())
         .add_system(update_camera.system())
+        .add_system(cursor_pick.system())
         .run();
 }
 
@@ -42,7 +35,6 @@ struct OrbitCamera {
     light_entity: Option<Entity>,
     camera_manipulation: Option<CameraManipulation>,
 }
-
 
 impl Default for OrbitCamera {
     fn default() -> Self {
@@ -57,7 +49,7 @@ impl Default for OrbitCamera {
     }
 }
 
-struct LightIndicator{}
+struct LightIndicator {}
 
 /// Perform scene creation, creating meshes, cameras, and lights
 fn setup(
@@ -65,7 +57,7 @@ fn setup(
     mut commands: Commands,
     // Resources
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Set up the geometry material
     let geometry_material_handle = materials.add(StandardMaterial {
@@ -80,21 +72,29 @@ fn setup(
         ..Default::default()
     });
 
+    let cam_entity = commands
+        .spawn(Camera3dComponents::default())
+        .current_entity();
 
-    let cam_entity = commands.spawn(Camera3dComponents::default()).current_entity();
-
-
-    let light_entity = commands.spawn(LightComponents{
-        translation: Translation::new(0.0, 0.0, 5.0),
-        light: Light{color: Color::rgb(0.5, 0.5, 0.5),..Default::default()},
-        ..Default::default()
-    }).current_entity();
+    let light_entity = commands
+        .spawn(LightComponents {
+            translation: Translation::new(0.0, 0.0, 5.0),
+            light: Light {
+                color: Color::rgb(0.5, 0.5, 0.5),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .current_entity();
 
     //dbg!(light_entity);
 
     let rotation_center_entity = commands
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere { radius: 0.1, subdivisions: 1 })),
+            mesh: meshes.add(Mesh::from(shape::Icosphere {
+                radius: 0.1,
+                subdivisions: 1,
+            })),
             material: rotation_center_material_handle.clone(),
             translation: Translation::new(0.0, 0.0, 0.0),
             ..Default::default()
@@ -110,8 +110,9 @@ fn setup(
     commands
         // Append camera to rotation center as child.
         .push_children(
-            rotation_center_entity.unwrap(), 
-            &[cam_entity.unwrap(), light_entity.unwrap()])
+            rotation_center_entity.unwrap(),
+            &[cam_entity.unwrap(), light_entity.unwrap()],
+        )
         // Add some geometry
         .spawn(PbrComponents {
             mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
@@ -120,22 +121,31 @@ fn setup(
             ..Default::default()
         })
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere { radius: 1.0, subdivisions: 10 })),
+            mesh: meshes.add(Mesh::from(shape::Icosphere {
+                radius: 1.0,
+                subdivisions: 10,
+            })),
             material: geometry_material_handle.clone(),
             translation: Translation::new(0.0, 0.0, 0.0),
             ..Default::default()
         })
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere { radius: 1.0, subdivisions: 5 })),
+            mesh: meshes.add(Mesh::from(shape::Icosphere {
+                radius: 1.0,
+                subdivisions: 5,
+            })),
             material: geometry_material_handle.clone(),
             translation: Translation::new(0.0, 3.0, 8.0),
             ..Default::default()
         })
-        .with(LightIndicator{})
+        .with(LightIndicator {})
         // Create the environment.
         .spawn(LightComponents {
             translation: Translation::new(30.0, 100.0, 30.0),
-            light: Light{color: Color::rgb(0.0, 0.0, 0.0),..Default::default()},
+            light: Light {
+                color: Color::rgb(0.0, 0.0, 0.0),
+                ..Default::default()
+            },
             ..Default::default()
         });
 }
@@ -151,7 +161,7 @@ enum CameraManipulation {
 fn process_user_input(
     // Resources
     time: Res<Time>,
-    mut state: ResMut<State>, 
+    mut state: ResMut<State>,
     mouse_button_inputs: Res<Input<MouseButton>>,
     mouse_motion_events: Res<Events<MouseMotion>>,
     mouse_wheel_events: Res<Events<MouseWheel>>,
@@ -160,12 +170,18 @@ fn process_user_input(
     mut query: Query<&mut OrbitCamera>,
 ) {
     // Get the mouse movement since the last frame
-    let mut mouse_movement = MouseMotion{ delta: Vec2::new(0.0, 0.0) };
+    let mut mouse_movement = MouseMotion {
+        delta: Vec2::new(0.0, 0.0),
+    };
     for event in state.mouse_motion_event_reader.iter(&mouse_motion_events) {
         mouse_movement = event.clone();
     }
     // Get the scroll wheel movement since the last frame
-    let mut scroll_amount = MouseWheel{ unit: MouseScrollUnit::Pixel , x: 0.0, y: 0.0 };
+    let mut scroll_amount = MouseWheel {
+        unit: MouseScrollUnit::Pixel,
+        x: 0.0,
+        y: 0.0,
+    };
     for event in state.mouse_wheel_event_reader.iter(&mouse_wheel_events) {
         scroll_amount = event.clone();
     }
@@ -179,26 +195,30 @@ fn process_user_input(
     let m_mouse: bool = mouse_button_inputs.pressed(MouseButton::Middle);
     let r_mouse: bool = mouse_button_inputs.pressed(MouseButton::Right);
 
-    let manipulation = 
-        if l_alt && m_mouse { Some(CameraManipulation::Pan(mouse_movement)) }
-        else if l_shift && m_mouse { Some(CameraManipulation::Rotate(mouse_movement)) }
-        else if m_mouse { Some(CameraManipulation::Orbit(mouse_movement)) }
-        else if scroll_amount.y != 0.0 { Some(CameraManipulation::Zoom(scroll_amount)) }
-        else { None };
+    let manipulation = if l_alt && m_mouse {
+        Some(CameraManipulation::Pan(mouse_movement))
+    } else if l_shift && m_mouse {
+        Some(CameraManipulation::Rotate(mouse_movement))
+    } else if m_mouse {
+        Some(CameraManipulation::Orbit(mouse_movement))
+    } else if scroll_amount.y != 0.0 {
+        Some(CameraManipulation::Zoom(scroll_amount))
+    } else {
+        None
+    };
 
     for mut camera in &mut query.iter() {
-        
         match &manipulation {
-            None => {},
+            None => {}
             Some(CameraManipulation::Orbit(mouse_move)) => {
                 camera.cam_yaw += mouse_move.delta.x() * time.delta_seconds;
                 camera.cam_pitch -= mouse_move.delta.y() * time.delta_seconds * look_scale;
-            },
+            }
             Some(CameraManipulation::Zoom(scroll)) => {
                 camera.cam_distance -= scroll.y * time.delta_seconds * zoom_scale;
-            },
-            Some(CameraManipulation::Pan(mouse_move)) => {},
-            Some(CameraManipulation::Rotate(mouse_move)) => {},
+            }
+            Some(CameraManipulation::Pan(mouse_move)) => {}
+            Some(CameraManipulation::Rotate(mouse_move)) => {}
         }
     }
 }
@@ -210,23 +230,25 @@ fn update_camera(
     camera_query: Query<(&mut Translation, &mut Rotation, &mut Transform)>,
     light_query: Query<(&mut Translation, &mut Light, &mut Transform)>,
 ) {
-
     // Take the results of the orbit cam query
-    for (mut orbit_center,  mut rotation) in &mut rotation_center_query.iter() {
-        orbit_center.cam_pitch = orbit_center.cam_pitch.max(1f32.to_radians()).min(179f32.to_radians());
+    for (mut orbit_center, mut rotation) in &mut rotation_center_query.iter() {
+        orbit_center.cam_pitch = orbit_center
+            .cam_pitch
+            .max(1f32.to_radians())
+            .min(179f32.to_radians());
         orbit_center.cam_distance = orbit_center.cam_distance.max(5.).min(30.);
 
         rotation.0 = Quat::from_rotation_y(-orbit_center.cam_yaw);
 
         //  If a camera entity exists in the query
         if let Some(camera_entity) = orbit_center.cam_entity {
-
-
             let cam_pos = Vec3::new(
-                    0.0, 
-                    orbit_center.cam_pitch.cos(), 
-                    -orbit_center.cam_pitch.sin()
-                ).normalize()* orbit_center.cam_distance;
+                0.0,
+                orbit_center.cam_pitch.cos(),
+                -orbit_center.cam_pitch.sin(),
+            )
+            .normalize()
+                * orbit_center.cam_distance;
 
             if let Ok(mut translation) = camera_query.get_mut::<Translation>(camera_entity) {
                 translation.0 = cam_pos;
@@ -242,13 +264,12 @@ fn update_camera(
             if let Ok(transform) = camera_query.get_mut::<Transform>(camera_entity) {
                 camera_transform = transform.value;
             }
-        
-            if let Some(light_entity) = orbit_center.light_entity {
 
+            if let Some(light_entity) = orbit_center.light_entity {
                 if let Ok(mut translation) = light_query.get_mut::<Translation>(light_entity) {
                     // get the quat the corresponds to the current yaw of the camera
                     let light_rot = Quat::from_rotation_y(-orbit_center.cam_yaw);
-                    // 
+                    //
                     translation.0 = light_rot.mul_vec3(cam_pos.into());
                 }
 
@@ -263,7 +284,7 @@ fn update_camera(
 
 fn cursor_pick(
     // Resources
-    mut state: ResMut<State>, 
+    mut state: ResMut<State>,
     cursor: Res<Events<MouseMotion>>,
     meshes: Res<Assets<Mesh>>,
     // Components
@@ -272,7 +293,9 @@ fn cursor_pick(
     transform_query: Query<&mut Transform>,
 ) {
     // Get the cursor position
-    let mut mouse_movement = MouseMotion{ delta: Vec2::new(0.0, 0.0) };
+    let mut mouse_movement = MouseMotion {
+        delta: Vec2::new(0.0, 0.0),
+    };
     for event in state.mouse_motion_event_reader.iter(&cursor) {
         mouse_movement = event.clone();
     }
@@ -289,18 +312,22 @@ fn cursor_pick(
     for (mesh_handle, transform) in &mut query.iter() {
         // Use the mesh handle to get a reference to a mesh asset
         if let Some(mesh) = meshes.get(mesh_handle) {
-            if mesh.primitive_topology != PrimitiveTopology::TriangleList { break }
+            if mesh.primitive_topology != PrimitiveTopology::TriangleList {
+                break;
+            }
             let combined_transform = inv_camera_transform * transform.value;
             for attribute in mesh.attributes.iter() {
-                if attribute.name != VertexAttribute::POSITION { break } 
+                if attribute.name != VertexAttribute::POSITION {
+                    break;
+                }
                 match &attribute.values {
                     VertexAttributeValues::Float3(positions) => {
                         // Now that we're in the vector of vertex positions, we want to look at
                         // positions for each vertex per triangle, so we'll pull out these vertex
                         // positions in chunks of three
-                        let v = Vec4::default();
-                        let mut vertices: [Vec4; 3] = [v, v, v];
-                        for triangle in positions.chunks(3){
+                        let v = Vec3::default();
+                        let mut vertices: [Vec3; 3] = [v, v, v];
+                        for triangle in positions.chunks(3) {
                             // With the three vertex positions of the current triangle available,
                             // we need to transform the position from the mesh's space, to the world
                             // space using the mesh's transform. First, the Vec3 needs to be
@@ -312,13 +339,14 @@ fn cursor_pick(
                             // final transform. Once in this state, comparison to the cast ray
                             // should be simple x/y comparison.
 
-                            for index in 0..3 {
-                                let vertex_position = Vec3::from(triangle[index]).extend(1.0);
-                                vertices[index] = combined_transform * vertex_position;
+                            if triangle.len() == 3 {
+                                for i in 0..3 {
+                                    vertices[i] =
+                                        combined_transform.transform_point3(triangle[i].into());
+                                }
                             }
-                            
                         }
-                    },
+                    }
                     _ => {}
                 }
             }
