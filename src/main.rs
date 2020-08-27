@@ -1,9 +1,11 @@
 use bevy::{
-    input::mouse::{MouseButton, MouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
     render::mesh::{VertexAttribute, VertexAttributeValues},
     render::pass::ClearColor,
     render::pipeline::PrimitiveTopology,
+    render::camera::PerspectiveProjection,
+    input::mouse::{MouseButton, MouseMotion, MouseScrollUnit, MouseWheel},
+    window::CursorMoved,
 };
 
 #[derive(Default)]
@@ -12,6 +14,9 @@ struct State {
     mouse_motion_event_reader: EventReader<MouseMotion>,
     // Collects mouse scroll motion in x/y
     mouse_wheel_event_reader: EventReader<MouseWheel>,
+    // Collects cursor position on screen in x/y
+    cursor_moved_event_reader: EventReader<CursorMoved>,
+    window_info_event_reader: EventReader<WindowDescriptor>,
 }
 
 fn main() {
@@ -285,29 +290,61 @@ fn update_camera(
 fn cursor_pick(
     // Resources
     mut state: ResMut<State>,
-    cursor: Res<Events<MouseMotion>>,
+    cursor: Res<Events<CursorMoved>>,
+    window: Res<Events<WindowDescriptor>>,
     meshes: Res<Assets<Mesh>>,
     // Components
     mut query: Query<(&Handle<Mesh>, &Transform)>,
     mut orbit_camera_query: Query<&OrbitCamera>,
-    transform_query: Query<&mut Transform>,
+    transform_query: Query<(&Transform, &PerspectiveProjection)>,
 ) {
     // Get the cursor position
-    let mut mouse_movement = MouseMotion {
-        delta: Vec2::new(0.0, 0.0),
-    };
-    for event in state.mouse_motion_event_reader.iter(&cursor) {
-        mouse_movement = event.clone();
-    }
+    let cursor_position = state.cursor_moved_event_reader.latest(&cursor).unwrap().position;
+    // Get current screen size
+    let window_info = state.window_info_event_reader.latest(&window).unwrap();
+    let screen_size = Vec2::from([window_info.width as f32, window_info.height as f32]);
+    // Normalized device coordinates (NDC) describes cursor position from (-1, -1) to (1, 1)
+    let ndc_cursor = (cursor_position / screen_size) * 2.0 - Vec2::from([1.0, 1.0]);
+    // Create near and far 3d positions using the mouse coordinates
+    let close_point_ndc = Vec3::new(ndc_cursor[0], ndc_cursor[1], 0.0);
+    let far_point_ndc = Vec3::new(ndc_cursor[0], ndc_cursor[1], 1.0);
+
+    // Transform the vector with the opposite of the projection matrix, this gives us the vector
+    // of the mouse as it "fans out" with the camera's field of view.
+    //
+    // Going from world space to NDC we do view -> projection, so going from NDC to world we want
+    // to do inverse(view -> projection), which means we take the inverse of each matrix and apply
+    // them in reverse order. So it shoud be inverse(projection) -> inverse (view), which in
+    // practice ends up as view.inverse() * projection.inverse() because column matrix
+    // multiplication is applied right to left
+    //
+    // you actually only need to do the "far" point. You already have the "near" point--it's simply the camera's position. So you can just do the inverse transform pipeline for the far point then do (far_point_world - camera.position()).normalize()
+    //2. Yes what you described is indeed correct. That opposite process you described is actually being applied by the inverse of the projection matrix. So projection.inverse() will take an NDC coordinate (as you say, farther = squished on x-y based on linear perspective/fov) and turn it into a "view space" coordinate, in which everything is now "unsquished"--the view frustum (which was previously just a cube) is now stretched out into the proper camera frustum from before, taking everything else with it. Then we also apply the inverse view transform, which takes a coordinate from view space (i.e. the center of the universe is the camera and each axis is aligned to the camera's) and turns it back into "world space", i.e. the "actual" coordinate system your application uses. 
+    //Usually the pipeline is doing the inverse of this (why we have to take inverses of these matrices). Usually the graphics pipeline is going from World to View to Screen(NDC). Instead in this case we want to go from Screen(NDC) to View to World.
+
     // Get the camera transformation and invert it for use later
-    let mut inv_camera_transform = Mat4::default();
+    let mut view_matrix = Mat4::default();
+    let mut camera_matrix = Mat4::default();
+    let mut projection_matrix = Mat4::default();
     for orbit_camera in &mut orbit_camera_query.iter() {
         if let Some(camera_entity) = orbit_camera.cam_entity {
-            if let Ok(transform) = transform_query.get_mut::<Transform>(camera_entity) {
-                inv_camera_transform = transform.value.inverse();
+            if let Ok(transform) = transform_query.get::<Transform>(camera_entity) {
+                camera_matrix = transform.value;
+                view_matrix = camera_matrix.inverse();
+            }
+            if let Ok(proj) = transform_query.get::<PerspectiveProjection>(camera_entity) {
+                projection_matrix = Mat4::perspective_rh(proj.fov, proj.aspect_ratio, proj.near, proj.far);
             }
         }
     }
+
+    let projection_view = camera_matrix * projection_matrix.inverse();
+    let far_point_world = projection_view.transform_point3(far_point_ndc);
+    let camera_position = camera_matrix.transform_point3(Vec3::zero());
+    let ray_transform = Mat4::face_toward(camera_position, far_point_world, Vec3::new(0.0, 1.0, 0.0));
+    //let cursor_ray = (far_point_world - camera_position).normalize();
+    
+
     // Iterate through each mesh in the scene
     for (mesh_handle, transform) in &mut query.iter() {
         // Use the mesh handle to get a reference to a mesh asset
@@ -315,7 +352,7 @@ fn cursor_pick(
             if mesh.primitive_topology != PrimitiveTopology::TriangleList {
                 break;
             }
-            let combined_transform = inv_camera_transform * transform.value;
+            let combined_transform = ray_transform.inverse() * transform.value;
             for attribute in mesh.attributes.iter() {
                 if attribute.name != VertexAttribute::POSITION {
                     break;
@@ -325,8 +362,7 @@ fn cursor_pick(
                         // Now that we're in the vector of vertex positions, we want to look at
                         // positions for each vertex per triangle, so we'll pull out these vertex
                         // positions in chunks of three
-                        let v = Vec3::default();
-                        let mut vertices: [Vec3; 3] = [v, v, v];
+                        let v = Vec3::zero(); 
                         for triangle in positions.chunks(3) {
                             // With the three vertex positions of the current triangle available,
                             // we need to transform the position from the mesh's space, to the world
@@ -339,12 +375,23 @@ fn cursor_pick(
                             // final transform. Once in this state, comparison to the cast ray
                             // should be simple x/y comparison.
 
+                            // Make sure this chunk has 3 vertices to avoid a panic.
+                            let mut vertices: [Vec3; 3] = [v, v, v];
                             if triangle.len() == 3 {
                                 for i in 0..3 {
                                     vertices[i] =
                                         combined_transform.transform_point3(triangle[i].into());
                                 }
                             }
+                            if point_in_tri(
+                                &Point2D{x: 0.0, y: 0.0}, 
+                                &Point2D{x: vertices[0].x(), y: vertices[0].y()}, 
+                                &Point2D{x: vertices[1].x(), y: vertices[1].y()}, 
+                                &Point2D{x: vertices[2].x(), y: vertices[2].y()},
+                            ) {
+                                println!("HIT!");
+                            }
+                            
                         }
                     }
                     _ => {}
@@ -352,4 +399,21 @@ fn cursor_pick(
             }
         }
     }
+}
+
+struct Point2D {
+    x: f32,
+    y: f32,
+}
+
+fn double_tri_area(a: &Point2D, b: &Point2D, c: &Point2D) -> f32 {
+    a.x*(b.y - c.y) + b.x*(c.y - a.y) + c.x*(a.y-b.y)
+}
+
+fn point_in_tri(p: &Point2D, a: &Point2D, b: &Point2D, c: &Point2D) -> bool {
+    let area = double_tri_area(a, b, c);
+    let pab = double_tri_area(p, a, b);
+    let pac = double_tri_area(p, a, c);
+    let pbc = double_tri_area(p, b, c);
+    area == pab + pac + pbc
 }
