@@ -10,6 +10,11 @@
 
 ### Ray Cast Option 1: CPU - Use a system on Handle<Mesh> and Transform
 
+take mesh, apply projection and view (cam.inverse) matrices
+take the cursor posiiton in ndc, and translate the mesh with this vector
+
+translation_cursor * projection * camera.inverse * mesh transform
+
 https://discord.com/channels/691052431525675048/742884593551802431/747295381477523476
 
 * Take the cursor position
