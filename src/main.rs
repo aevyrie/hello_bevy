@@ -313,33 +313,6 @@ fn cursor_pick(
     let far_point_ndc = Vec3::new(ndc_cursor[0], ndc_cursor[1], 1.0);
     let far_point_camera_ndc = Vec3::new(0.0, 0.0, 1.0);
 
-    // Transform the vector with the opposite of the projection matrix, this gives us the vector
-    // of the mouse as it "fans out" with the camera's field of view.
-
-    // Going from world space to NDC we do view -> projection, so going from NDC to world we want
-    // to do inverse(view -> projection), which means we take the inverse of each matrix and apply
-    // them in reverse order. So it shoud be inverse(projection) -> inverse (view), which in
-    // practice ends up as view.inverse() * projection.inverse() because column matrix
-    // multiplication is applied right to left
-
-    // you actually only need to do the "far" point. You already have the "near" point--it's simply
-    // the camera's position. So you can just do the inverse transform pipeline for the far point
-    // then do (far_point_world - camera.position()).normalize()
-
-    // Yes what you described is indeed correct. That opposite process you described is actually
-    // being applied by the inverse of the projection matrix. So projection.inverse() will take an
-    // NDC coordinate (as you say, farther = squished on x-y based on linear perspective/fov) and
-    // turn it into a "view space" coordinate, in which everything is now "unsquished"--the view
-    // frustum (which was previously just a cube) is now stretched out into the proper camera
-    // frustum from before, taking everything else with it. Then we also apply the inverse view
-    // transform, which takes a coordinate from view space (i.e. the center of the universe is the
-    // camera and each axis is aligned to the camera's) and turns it back into "world space", i.e.
-    // the "actual" coordinate system your application uses.
-
-    // Usually the pipeline is doing the inverse of this (why we have to take inverses of these
-    // matrices). Usually the graphics pipeline is going from World to View to Screen(NDC). Instead
-    // in this case we want to go from Screen(NDC) to View to World.
-
     // projection * camera.inverse * mesh transform
     // compare xy with cursor xy
 
@@ -365,7 +338,7 @@ fn cursor_pick(
             if mesh.primitive_topology != PrimitiveTopology::TriangleList {
                 break;
             }
-            // we need to move the mesh from model space to world space using it's transform,
+            // we need to move the mesh from model space to world space using its transform,
             // them move it with the inverse of the cursor ray transform, to place it in a
             // coordinate space relative to the cursor vector
             let combined_transform = projection_matrix * view_matrix * transform.value;
@@ -397,23 +370,14 @@ fn cursor_pick(
                     if index.len() == 3 {
                         for i in 0..3 {
                             triangle[i] = combined_transform
-                                .transform_point3(vertices[index[i] as usize].into());
+                                .transform_point3(Vec3::from(vertices[index[i] as usize]));
                         }
                     }
                     if point_in_tri(
-                        &Point2D { x: ndc_cursor.x(), y: ndc_cursor.y() },
-                        &Point2D {
-                            x: triangle[0].x(),
-                            y: triangle[0].y(),
-                        },
-                        &Point2D {
-                            x: triangle[1].x(),
-                            y: triangle[1].y(),
-                        },
-                        &Point2D {
-                            x: triangle[2].x(),
-                            y: triangle[2].y(),
-                        },
+                        &ndc_cursor,
+                        &Vec2::new(triangle[0].x(), triangle[0].y()),
+                        &Vec2::new(triangle[1].x(), triangle[1].y()),
+                        &Vec2::new(triangle[2].x(), triangle[2].y()),
                     ) {
                         println!("HIT! {}\n{}\n{:?}", mesh_handle.id.0, ndc_cursor, triangle);
                         break;
@@ -426,16 +390,11 @@ fn cursor_pick(
     }
 }
 
-struct Point2D {
-    x: f32,
-    y: f32,
+fn double_tri_area(a: &Vec2, b: &Vec2, c: &Vec2) -> f32 {
+    f32::abs(a.x() * (b.y() - c.y()) + b.x() * (c.y() - a.y()) + c.x() * (a.y() - b.y()))
 }
 
-fn double_tri_area(a: &Point2D, b: &Point2D, c: &Point2D) -> f32 {
-    f32::abs(a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
-}
-
-fn point_in_tri(p: &Point2D, a: &Point2D, b: &Point2D, c: &Point2D) -> bool {
+fn point_in_tri(p: &Vec2, a: &Vec2, b: &Vec2, c: &Vec2) -> bool {
     let area = double_tri_area(a, b, c);
     let pab = double_tri_area(p, a, b);
     let pac = double_tri_area(p, a, c);
