@@ -16,7 +16,6 @@ struct State {
     mouse_wheel_event_reader: EventReader<MouseWheel>,
     // Collects cursor position on screen in x/y
     cursor_moved_event_reader: EventReader<CursorMoved>,
-    window_info_event_reader: EventReader<WindowDescriptor>,
 }
 
 fn main() {
@@ -92,8 +91,6 @@ fn setup(
         })
         .current_entity();
 
-    //dbg!(light_entity);
-
     let rotation_center_entity = commands
         .spawn(PbrComponents {
             mesh: meshes.add(Mesh::from(shape::Icosphere {
@@ -155,6 +152,7 @@ fn setup(
         });
 }
 
+#[derive(Clone)]
 enum CameraManipulation {
     Pan(MouseMotion),
     Orbit(MouseMotion),
@@ -196,9 +194,9 @@ fn process_user_input(
 
     let l_alt: bool = keyboard_input.pressed(KeyCode::LAlt);
     let l_shift: bool = keyboard_input.pressed(KeyCode::LShift);
-    let l_mouse: bool = mouse_button_inputs.pressed(MouseButton::Left);
+    //let l_mouse: bool = mouse_button_inputs.pressed(MouseButton::Left);
     let m_mouse: bool = mouse_button_inputs.pressed(MouseButton::Middle);
-    let r_mouse: bool = mouse_button_inputs.pressed(MouseButton::Right);
+    //let r_mouse: bool = mouse_button_inputs.pressed(MouseButton::Right);
 
     let manipulation = if l_alt && m_mouse {
         Some(CameraManipulation::Pan(mouse_movement))
@@ -222,9 +220,10 @@ fn process_user_input(
             Some(CameraManipulation::Zoom(scroll)) => {
                 camera.cam_distance -= scroll.y * time.delta_seconds * zoom_scale;
             }
-            Some(CameraManipulation::Pan(mouse_move)) => {}
-            Some(CameraManipulation::Rotate(mouse_move)) => {}
+            Some(CameraManipulation::Pan(_)) => {}
+            Some(CameraManipulation::Rotate(_)) => {}
         }
+        camera.camera_manipulation = manipulation.clone();
     }
 }
 
@@ -299,24 +298,19 @@ fn cursor_pick(
     transform_query: Query<(&Transform, &PerspectiveProjection)>,
 ) {
     // Get the cursor position
-    let mut cursor_position = Vec2::zero();
-    match state.cursor_moved_event_reader.latest(&cursor) {
-        Some(cursor_moved) => cursor_position = cursor_moved.position,
+    let cursor_pos_screen: Vec2 = match state.cursor_moved_event_reader.latest(&cursor) {
+        Some(cursor_moved) => cursor_moved.position,
         None => return,
-    }
+    };
+
     // Get current screen size
     let window = windows.get_primary().unwrap();
     let screen_size = Vec2::from([window.width as f32, window.height as f32]);
+
     // Normalized device coordinates (NDC) describes cursor position from (-1, -1) to (1, 1)
-    let ndc_cursor: Vec2 = (cursor_position / screen_size) * 2.0 - Vec2::from([1.0, 1.0]);
-    // Create near and far 3d positions using the mouse coordinates
-    let far_point_ndc = Vec3::new(ndc_cursor[0], ndc_cursor[1], 1.0);
-    let far_point_camera_ndc = Vec3::new(0.0, 0.0, 1.0);
+    let cursor_pos_ndc: Vec2 = (cursor_pos_screen / screen_size) * 2.0 - Vec2::from([1.0, 1.0]);
 
-    // projection * camera.inverse * mesh transform
-    // compare xy with cursor xy
-
-    // Get the view transform from the camera, 
+    // Get the view transform and projection matrix from the camera
     let mut view_matrix = Mat4::zero();
     let mut projection_matrix = Mat4::zero();
     for orbit_camera in &mut orbit_camera_query.iter() {
@@ -325,8 +319,12 @@ fn cursor_pick(
                 view_matrix = transform.value.inverse();
             }
             if let Ok(proj) = transform_query.get::<PerspectiveProjection>(camera_entity) {
-                projection_matrix =
-                    Mat4::perspective_rh(proj.fov, proj.aspect_ratio, proj.near, proj.far);
+                projection_matrix = Mat4::perspective_rh(
+                    proj.fov, 
+                    proj.aspect_ratio, 
+                    proj.near, 
+                    proj.far
+                );
             }
         }
     }
@@ -338,69 +336,77 @@ fn cursor_pick(
             if mesh.primitive_topology != PrimitiveTopology::TriangleList {
                 break;
             }
-            // we need to move the mesh from model space to world space using its transform,
-            // them move it with the inverse of the cursor ray transform, to place it in a
-            // coordinate space relative to the cursor vector
+            // We need to transform the mesh vertices' positions from the mesh space to the world
+            // space using the mesh's transform, move it to the camera's space using the view
+            // matrix (camera.inverse), and finally, apply the projection matrix. Because column
+            // matrices are evaluated right to left, we have to order it correctly:
             let combined_transform = projection_matrix * view_matrix * transform.value;
-            let mut vertices = Vec::new();
+
+            // Get the vertex positions from the mesh reference resolved from the mesh handle
+            let mut vertex_positions = Vec::new();
             for attribute in mesh.attributes.iter() {
-                if attribute.name != VertexAttribute::POSITION {
-                    break;
-                }
-                match &attribute.values {
-                    VertexAttributeValues::Float3(positions) => vertices = positions.clone(),
-                    _ => {}
+                if attribute.name == VertexAttribute::POSITION {
+                    vertex_positions = match &attribute.values {
+                        VertexAttributeValues::Float3(positions) => positions.clone(),
+                        _ => panic!("Unexpected vertex types in VertexAttribute::POSITION")
+                    };
                 }
             }
 
+            // We've have everything set up, now we can jump into the mesh's list of indices and
+            // check triangles for cursor intersection.
             if let Some(indices) = &mesh.indices {
                 // Now that we're in the vector of vertex indices, we want to look at the vertex
                 // positions for each triangle, so we'll take indices in chunks of three, where each
-                // chunk of three indices defines the three vertices of a triangle.
+                // chunk of three indices are references to the three vertices of a triangle.
                 for index in indices.chunks(3) {
-                    // With the three vertex positions of the current triangle available,
-                    // we need to transform the 3d positions from the mesh's space, to the world
-                    // space using the mesh's transform, then move it relative to the camera's
-                    // space using the view matrix (camera.inverse), and finally apply the
-                    // perspective matrix. The position of each vertex should now be given to us
-                    // relative to the NDC space.
-                    let v = Vec3::zero();
-                    let mut triangle: [Vec3; 3] = [v, v, v];
                     // Make sure this chunk has 3 vertices to avoid a panic.
                     if index.len() == 3 {
+                        // Set up and empty container for triangle vertices
+                        let mut triangle: [Vec3; 3] = [Vec3::zero(), Vec3::zero(), Vec3::zero()];
+                        // We can now grab the position of each vertex in the triangle using the
+                        // indices pointing into the position vector. These positions are relative
+                        // to the coordinate system of the mesh the vertex/triangle belongs to. To
+                        // test if the triangle is being hovered over, we need to convert this to
+                        // NDC (normalized device coordinates) space using the combined 
+                        // transformation we made earlier.
                         for i in 0..3 {
                             triangle[i] = combined_transform
-                                .transform_point3(Vec3::from(vertices[index[i] as usize]));
+                                .transform_point3(Vec3::from(vertex_positions[index[i] as usize]));
+                        }
+                        if point_in_tri(
+                            &cursor_pos_ndc,
+                            &Vec2::new(triangle[0].x(), triangle[0].y()),
+                            &Vec2::new(triangle[1].x(), triangle[1].y()),
+                            &Vec2::new(triangle[2].x(), triangle[2].y()),
+                        ) {
+                            println!("HIT! {}\n{}\n{:?}", mesh_handle.id.0, cursor_pos_ndc, triangle);
+                            break;
                         }
                     }
-                    if point_in_tri(
-                        &ndc_cursor,
-                        &Vec2::new(triangle[0].x(), triangle[0].y()),
-                        &Vec2::new(triangle[1].x(), triangle[1].y()),
-                        &Vec2::new(triangle[2].x(), triangle[2].y()),
-                    ) {
-                        println!("HIT! {}\n{}\n{:?}", mesh_handle.id.0, ndc_cursor, triangle);
-                        break;
-                    } else {
-                        //println!("{}\n{:?}", far_point_world, triangle);
-                    }
                 }
+            } else {
+                panic!("No index matrix found in mesh {:?}\n{:?}", mesh_handle, mesh);
             }
         }
     }
 }
 
+/// Compute the area of a triangle given 2D vertex coordinates, "/2" removed to save an operation
 fn double_tri_area(a: &Vec2, b: &Vec2, c: &Vec2) -> f32 {
     f32::abs(a.x() * (b.y() - c.y()) + b.x() * (c.y() - a.y()) + c.x() * (a.y() - b.y()))
 }
 
+/// Checks if a point is inside a triangle by comparing the summed areas of the triangles, the point
+/// is inside the triangle if the areas are equal. An epsilon is used due to floating point error.
+/// Todo: barycentric method
 fn point_in_tri(p: &Vec2, a: &Vec2, b: &Vec2, c: &Vec2) -> bool {
     let area = double_tri_area(a, b, c);
     let pab = double_tri_area(p, a, b);
     let pac = double_tri_area(p, a, c);
     let pbc = double_tri_area(p, b, c);
     let area_tris = pab + pac + pbc;
-    let epsilon = 0.000000001;
+    let epsilon = 0.0000001;
     //println!("{:.3}  {:.3}", area, area_tris);
     f32::abs(area - area_tris) < epsilon
 }
