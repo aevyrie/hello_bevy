@@ -15,7 +15,7 @@ struct State {
 
 fn main() {
     App::build()
-        .add_resource(ClearColor(Color::rgb(0.1, 0.1, 0.1)))
+        .add_resource(ClearColor(Color::rgb(0.8, 0.8, 0.8)))
         .add_resource(Msaa { samples: 4 })
         .init_resource::<State>()
         .add_default_plugins()
@@ -68,14 +68,16 @@ fn setup(
     });
 
     pick_state.hovered_material = materials.add(StandardMaterial {
-        albedo: Color::rgb(0.5, 0.5, 1.0),
-        shaded: true,
+        albedo: Color::rgb(0.3, 0.5, 0.8),
+        shaded: false,
         ..Default::default()
     });
 
+    materials.get(geometry_material_handle).unwrap();
+
     pick_state.selected_material = materials.add(StandardMaterial {
-        albedo: Color::rgb(0.5, 1.0, 0.5),
-        shaded: true,
+        albedo: Color::rgb(0.3, 0.8, 0.3),
+        shaded: false,
         ..Default::default()
     });
 
