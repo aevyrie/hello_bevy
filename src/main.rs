@@ -49,8 +49,6 @@ impl Default for OrbitCamera {
     }
 }
 
-struct LightIndicator {}
-
 /// Perform scene creation, creating meshes, cameras, and lights
 fn setup(
     // Commands
@@ -58,7 +56,6 @@ fn setup(
     // Resources
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut pick_state: ResMut<PickState>,
 ) {
     // Set up the geometry material
     let geometry_material_handle = materials.add(StandardMaterial {
@@ -173,6 +170,7 @@ fn process_user_input(
     mouse_motion_events: Res<Events<MouseMotion>>,
     mouse_wheel_events: Res<Events<MouseWheel>>,
     keyboard_input: Res<Input<KeyCode>>,
+    pick_state: Res<PickState>,
     // Component Queries
     mut query: Query<&mut OrbitCamera>,
 ) {
@@ -218,13 +216,16 @@ fn process_user_input(
         match &manipulation {
             None => {}
             Some(CameraManipulation::Orbit(mouse_move)) => {
+                println!("PS: {:?}",pick_state.list());
+
                 camera.cam_yaw += mouse_move.delta.x() * time.delta_seconds;
                 camera.cam_pitch -= mouse_move.delta.y() * time.delta_seconds * look_scale;
             }
             Some(CameraManipulation::Zoom(scroll)) => {
                 camera.cam_distance -= scroll.y * time.delta_seconds * zoom_scale;
             }
-            Some(CameraManipulation::Pan(_)) => {}
+            Some(CameraManipulation::Pan(_)) => {
+            }
             Some(CameraManipulation::Rotate(_)) => {}
         }
         camera.camera_manipulation = manipulation.clone();
