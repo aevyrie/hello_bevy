@@ -19,7 +19,7 @@ fn main() {
         .add_resource(Msaa { samples: 4 })
         .init_resource::<State>()
         .add_default_plugins()
-        .add_plugin(ModPicking)
+        .add_plugin(PickingPlugin)
         .add_startup_system(setup.system())
         .add_system(process_user_input.system())
         .add_system(update_camera.system())
@@ -58,26 +58,12 @@ fn setup(
     // Resources
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut pick_state: ResMut<MousePicking>,
+    mut pick_state: ResMut<PickState>,
 ) {
     // Set up the geometry material
     let geometry_material_handle = materials.add(StandardMaterial {
         albedo: Color::rgb(1.0, 1.0, 1.0),
         shaded: true,
-        ..Default::default()
-    });
-
-    pick_state.hovered_material = materials.add(StandardMaterial {
-        albedo: Color::rgb(0.3, 0.5, 0.8),
-        shaded: false,
-        ..Default::default()
-    });
-
-    materials.get(geometry_material_handle).unwrap();
-
-    pick_state.selected_material = materials.add(StandardMaterial {
-        albedo: Color::rgb(0.3, 0.8, 0.3),
-        shaded: false,
         ..Default::default()
     });
 
@@ -120,6 +106,16 @@ fn setup(
         })
         .current_entity();
 
+    let cube_mesh = meshes.add(Mesh::from(shape::Cube { size: 1.0 }));
+    let sphere_mesh_1 = meshes.add(Mesh::from(shape::Icosphere {
+        radius: 1.0,
+        subdivisions: 10,
+    }));
+    let sphere_mesh_2 = meshes.add(Mesh::from(shape::Icosphere {
+        radius: 1.0,
+        subdivisions: 10,
+    }));
+
     commands
         // Append camera to rotation center as child.
         .push_children(
@@ -128,33 +124,27 @@ fn setup(
         )
         // Add some geometry
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
+            mesh: cube_mesh,
             material: geometry_material_handle.clone(),
             translation: Translation::new(-2.0, -2.0, -2.0),
             ..Default::default()
         })
-        .with(Selectable::default())
+        .with(PickableMesh::new(meshes.get(&cube_mesh).unwrap()))
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere {
-                radius: 1.0,
-                subdivisions: 10,
-            })),
+            mesh: sphere_mesh_1,
             material: geometry_material_handle.clone(),
             translation: Translation::new(3.0, -0.0, 0.0),
             ..Default::default()
         })
-        .with(Selectable::default())
+        .with(PickableMesh::new(meshes.get(&sphere_mesh_1).unwrap()))
         .spawn(PbrComponents {
-            mesh: meshes.add(Mesh::from(shape::Icosphere {
-                radius: 1.0,
-                subdivisions: 5,
-            })),
+            mesh: sphere_mesh_2,
             material: geometry_material_handle.clone(),
             translation: Translation::new(0.0, 3.0, 8.0),
             ..Default::default()
         })
-        .with(Selectable::default())
-        .with(LightIndicator {})
+        .with(PickableMesh::new(meshes.get(&sphere_mesh_2).unwrap()))
+        //.with(LightIndicator {})
         // Create the environment.
         .spawn(LightComponents {
             translation: Translation::new(30.0, 100.0, 30.0),
