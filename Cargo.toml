@@ -11,4 +11,4 @@ edition = "2018"
 bevy = { git = "https://github.com/bevyengine/bevy", branch = "master" }
 #bevy = { git = "https://github.com/aevyrie/bevy" }
 #bevy = { git = "https://github.com/ifletsomeclaire/bevy", branch = "master" }
-bevy_mod_picking = { git = "https://github.com/aevyrie/bevy_mod_picking", branch = "master" }
+#bevy_mod_picking = { git = "https://github.com/aevyrie/bevy_mod_picking", branch = "master" }

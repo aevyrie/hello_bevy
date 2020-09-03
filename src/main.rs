@@ -3,7 +3,9 @@ use bevy::{
     prelude::*,
     render::pass::ClearColor,
 };
-use bevy_mod_picking::*;
+//use bevy_mod_picking::*;
+mod pick;
+use pick::*;
 
 #[derive(Default)]
 struct State {
@@ -127,6 +129,7 @@ fn setup(
             ..Default::default()
         })
         .with(PickableMesh::new(meshes.get(&cube_mesh).unwrap()))
+        .with(HighlightablePickMesh::new())
         .spawn(PbrComponents {
             mesh: sphere_mesh_1,
             material: geometry_material_handle.clone(),
